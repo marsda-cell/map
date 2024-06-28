@@ -1,0 +1,194 @@
+function createMapHTML() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var range = sheet.getDataRange();
+  var values = range.getValues();
+  var headers = values[0]; // First row as headers
+
+  var territories = {};
+
+  for (var j = 0; j < headers.length; j++) {
+    var personName = headers[j];
+    var zipCodes = [];
+
+    for (var i = 1; i < values.length; i++) { // Skip header row
+      var zipCode = values[i][j];
+      if (zipCode) {
+        zipCodes.push(zipCode);
+      }
+    }
+    
+    territories[personName] = zipCodes;
+  }
+
+  var htmlContent = generateMapHTMLContent(territories);
+  var htmlFile = DriveApp.createFile('InteractiveMap.html', htmlContent, MimeType.HTML);
+  SpreadsheetApp.getUi().alert('HTML file created: ' + htmlFile.getUrl());
+}
+
+function generateMapHTMLContent(territories) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        #map {
+          height: 100%;
+        }
+        html, body {
+          height: 100%;
+          margin: 0;
+          padding: 0;
+        }
+      </style>
+      <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY"></script>
+      <script>
+        var map;
+        var geocoder;
+        var territories = ${JSON.stringify(territories)};
+        var circles = {};
+        var selectedAE = '';
+        var selectedZipCodes = [];
+        var colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF'];
+
+        function initMap() {
+          map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 5,
+            center: {lat: 39.8283, lng: -98.5795}  // Center the map on the US
+          });
+
+          geocoder = new google.maps.Geocoder();
+
+          var colorIndex = 0;
+          for (var person in territories) {
+            geocodeZipCodes(person, territories[person], colors[colorIndex % colors.length]);
+            colorIndex++;
+          }
+
+          createDropdown();
+        }
+
+        function geocodeZipCodes(person, zipCodes, color) {
+          var completed = 0;
+
+          zipCodes.forEach(function(zipCode) {
+            geocoder.geocode({'address': zipCode}, function(results, status) {
+              if (status === 'OK') {
+                var position = results[0].geometry.location;
+                createCircle(person, zipCode, position, color);
+              } else {
+                console.error('Geocode was not successful for the following reason: ' + status);
+              }
+
+              if (++completed === zipCodes.length) {
+                // All zip codes processed for this person
+              }
+            });
+          });
+        }
+
+        function createCircle(person, zipCode, position, color) {
+          var circle = new google.maps.Circle({
+            strokeColor: color,
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: color,
+            fillOpacity: 0.35,
+            map: null,
+            center: position,
+            radius: 5000  // Adjust radius as necessary
+          });
+
+          if (!circles[person]) {
+            circles[person] = {};
+          }
+          circles[person][zipCode] = circle;
+        }
+
+        function showTerritory(person) {
+          selectedAE = person;
+          updateZipCodeDropdown();
+
+          for (var p in circles) {
+            for (var zip in circles[p]) {
+              circles[p][zip].setMap(null);
+            }
+          }
+        }
+
+        function showZipCodes(zipCodes) {
+          for (var zip in circles[selectedAE]) {
+            circles[selectedAE][zip].setMap(null);
+          }
+          zipCodes.forEach(function(zip) {
+            if (circles[selectedAE][zip]) {
+              circles[selectedAE][zip].setMap(map);
+            }
+          });
+        }
+
+        function createDropdown() {
+          var dropdownAE = document.createElement('select');
+          dropdownAE.onchange = function() {
+            showTerritory(this.value);
+          };
+
+          var option = document.createElement('option');
+          option.text = 'Select an Account Executive';
+          option.value = '';
+          dropdownAE.add(option);
+
+          for (var person in territories) {
+            var option = document.createElement('option');
+            option.text = person;
+            option.value = person;
+            dropdownAE.add(option);
+          }
+
+          document.body.insertBefore(dropdownAE, document.getElementById('map'));
+
+          var zipCodeContainer = document.createElement('div');
+          zipCodeContainer.id = 'zipCodeContainer';
+          document.body.insertBefore(zipCodeContainer, document.getElementById('map'));
+        }
+
+        function updateZipCodeDropdown() {
+          var zipCodeContainer = document.getElementById('zipCodeContainer');
+          zipCodeContainer.innerHTML = '';
+
+          if (selectedAE) {
+            territories[selectedAE].forEach(function(zipCode) {
+              var label = document.createElement('label');
+              var checkbox = document.createElement('input');
+              checkbox.type = 'checkbox';
+              checkbox.value = zipCode;
+              checkbox.onchange = function() {
+                if (this.checked) {
+                  selectedZipCodes.push(this.value);
+                } else {
+                  selectedZipCodes = selectedZipCodes.filter(function(zip) {
+                    return zip !== checkbox.value;
+                  });
+                }
+                showZipCodes(selectedZipCodes);
+              };
+              label.appendChild(checkbox);
+              label.appendChild(document.createTextNode(zipCode));
+              zipCodeContainer.appendChild(label);
+              zipCodeContainer.appendChild(document.createElement('br'));
+            });
+          }
+        }
+
+        window.onload = function() {
+          initMap();
+        };
+      </script>
+    </head>
+    <body>
+      <h3>Account Executives' Territories</h3>
+      <div id="map" style="width: 100%; height: 500px;"></div>
+    </body>
+    </html>
+  `;
+}
+
